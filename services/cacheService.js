@@ -1,6 +1,6 @@
-const { Cache } = require("../cache/cache");
+const { LRUCache } = require("../cache/LRUCache");
 
-const cache = new Cache(100);
+const cache = new LRUCache(100);
 
 const setItem = (req, res) => {
   const { key, value, ttl } = req.body;
@@ -66,7 +66,7 @@ const getAllKeys = (req, res) => {
     totalItems: cache.size(),
     hitRate: cache.hitRate(),
     missRate: cache.missRate(),
-    keys: [...cache.cache.keys()],
+    keys: [...cache.keys()],
   });
 };
 
