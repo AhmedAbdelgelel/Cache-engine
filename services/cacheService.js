@@ -66,7 +66,7 @@ const getAllKeys = (req, res) => {
     totalItems: cache.size(),
     hitRate: cache.hitRate(),
     missRate: cache.missRate(),
-    keys: [...cache.keys()],
+    keys: [...cache.store.keys()],
   });
 };
 
