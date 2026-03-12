@@ -1,13 +1,11 @@
 const express = require("express");
-const cacheRoutes = require("./routes/cacheRoutes");
-const zsetRoutes = require("./routes/zsetRoutes");
+const mountRoutes = require("./routes");
 
 const app = express();
 app.use(express.json());
 
 // Routes
-app.use("/cache", cacheRoutes);
-app.use("/zset", zsetRoutes);
+mountRoutes(app);
 
 // Health check
 app.get("/health", (_req, res) => {
