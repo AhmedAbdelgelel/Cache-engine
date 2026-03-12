@@ -1,89 +1,114 @@
 const { createCacheEntry } = require("../types/cacheEntry");
 const { DoublyLinkedList } = require("./DoublyLinkedList");
 const { Node } = require("./Node");
+const { MemoryTracker } = require("../memory/MemoryTracker");
+const { ExpirationManager } = require("../expiration/ExpirationManager");
+const { Metrics } = require("../metrics/Metrics");
+
+const SAMPLE_RATE = 0.01;
 
 class LRUCache {
-  constructor(maxSize = 100) {
+  constructor(opts = {}) {
+    if (typeof opts === "number") opts = { maxSize: opts };
+    this.maxSize = opts.maxSize || 100;
     this.store = new Map();
     this.list = new DoublyLinkedList();
-    this.maxSize = maxSize;
-    this.hits = 0;
-    this.misses = 0;
-    this.evictions = 0;
-    console.log(`✅ LRUCache initialized | maxSize: ${maxSize}`);
+    this.memory = new MemoryTracker(opts.maxMemoryBytes || 64 * 1024 * 1024);
+    this.metrics = new Metrics();
+    this.expirer = new ExpirationManager(this, opts.sweepInterval || 1000);
   }
 
   _isExpired(entry) {
     return entry.expiresAt !== null && Date.now() > entry.expiresAt;
   }
 
+  _evictOne() {
+    const lruNode = this.list.removeTail();
+    if (!lruNode) return false;
+    const record = this.store.get(lruNode.key);
+    if (record) this.memory.remove(record.entry.size || 0);
+    this.store.delete(lruNode.key);
+    this.metrics.recordEviction();
+    return true;
+  }
+
   set(key, value, ttl = null) {
+    const sample = Math.random() < SAMPLE_RATE;
+    const hr = sample ? process.hrtime() : null;
+
     if (this.store.has(key)) {
-      // Update existing — refresh node position and entry data
-      const { node } = this.store.get(key);
+      const record = this.store.get(key);
+      this.memory.remove(record.entry.size || 0);
       const entry = createCacheEntry(key, value, ttl);
-      node.value = value;
-      this.store.set(key, { entry, node });
-      this.list.moveToHead(node);
-      console.log(
-        `UPDATE: "${key}" | ttl: ${ttl !== null ? ttl + "ms" : "none"}`,
-      );
+      record.entry = entry;
+      record.node.value = value;
+      this.list.moveToHead(record.node);
+      this.memory.add(entry.size);
+      this.metrics.recordSet();
+      if (hr) this.metrics.recordLatency("set", hr);
       return entry;
     }
 
-    if (this.store.size >= this.maxSize) {
-      const lruNode = this.list.removeTail();
-      if (lruNode) {
-        this.store.delete(lruNode.key);
-        this.evictions++;
-        console.log(`🗑️  EVICTED (LRU): "${lruNode.key}"`);
-      }
+    while (this.store.size >= this.maxSize) {
+      if (!this._evictOne()) break;
     }
 
     const entry = createCacheEntry(key, value, ttl);
+    this.memory.add(entry.size);
+
+    while (this.memory.isOverLimit()) {
+      if (!this._evictOne()) break;
+    }
+
     const node = new Node(key, value);
     this.list.addToHead(node);
     this.store.set(key, { entry, node });
-    console.log(
-      `📝 SET: "${key}" | ${entry.size} bytes | ttl: ${ttl !== null ? ttl + "ms" : "none"}`,
-    );
+    this.metrics.recordSet();
+    if (hr) this.metrics.recordLatency("set", hr);
     return entry;
   }
 
   get(key) {
+    const sample = Math.random() < SAMPLE_RATE;
+    const hr = sample ? process.hrtime() : null;
+    this.metrics.recordGet();
     const record = this.store.get(key);
+
     if (!record) {
-      this.misses++;
-      console.log(`❌ MISS: "${key}"`);
+      this.metrics.recordMiss();
+      if (hr) this.metrics.recordLatency("get", hr);
       return null;
     }
 
-    const { entry, node } = record;
-
-    if (this._isExpired(entry)) {
-      this.list.remove(node);
+    if (this._isExpired(record.entry)) {
+      this.list.remove(record.node);
+      this.memory.remove(record.entry.size || 0);
       this.store.delete(key);
-      this.misses++;
-      console.log(`⏰ EXPIRED: "${key}"`);
+      this.metrics.recordMiss();
+      if (hr) this.metrics.recordLatency("get", hr);
       return null;
     }
 
-    entry.lastAccessed = Date.now();
-    this.list.moveToHead(node);
-    this.hits++;
-    console.log(`✅ HIT: "${key}"`);
-    return entry.value;
+    record.entry.lastAccessed = Date.now();
+    this.list.moveToHead(record.node);
+    this.metrics.recordHit();
+    if (hr) this.metrics.recordLatency("get", hr);
+    return record.entry.value;
   }
 
   delete(key) {
+    const sample = Math.random() < SAMPLE_RATE;
+    const hr = sample ? process.hrtime() : null;
+    this.metrics.recordDelete();
     const record = this.store.get(key);
     if (!record) {
-      console.log(`⚠️  NOT FOUND: "${key}"`);
+      if (hr) this.metrics.recordLatency("delete", hr);
       return false;
     }
     this.list.remove(record.node);
+    this.memory.remove(record.entry.size || 0);
     this.store.delete(key);
-    console.log(`🗑️  DELETED: "${key}"`);
+    if (hr) this.metrics.recordLatency("delete", hr);
     return true;
   }
 
@@ -91,7 +116,7 @@ class LRUCache {
     const count = this.store.size;
     this.store.clear();
     this.list = new DoublyLinkedList();
-    console.log(`🧹 Cleared ${count} items`);
+    this.memory.reset();
     return count;
   }
 
@@ -99,14 +124,24 @@ class LRUCache {
     return this.store.size;
   }
 
+  keys() {
+    return [...this.store.keys()];
+  }
+
   hitRate() {
-    const total = this.hits + this.misses;
-    return total === 0 ? "0%" : ((this.hits / total) * 100).toFixed(2) + "%";
+    return this.metrics.hitRate() + "%";
   }
 
   missRate() {
-    const total = this.hits + this.misses;
-    return total === 0 ? "0%" : ((this.misses / total) * 100).toFixed(2) + "%";
+    return this.metrics.missRate() + "%";
+  }
+
+  getMetrics() {
+    return this.metrics.getSnapshot(this.memory.getStats());
+  }
+
+  destroy() {
+    this.expirer.stop();
   }
 }
 

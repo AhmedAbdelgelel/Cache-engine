@@ -4,7 +4,10 @@
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "benchmark": "node benchmark/benchmark.js",
+    "benchmark:quick": "node benchmark/benchmark.js --quick",
+    "benchmark:json": "node benchmark/benchmark.js --json",
+    "test": "node --test tests/LRUCache.test.js tests/ZSet.test.js tests/StampedeGuard.test.js tests/ExpirationManager.test.js tests/MemoryTracker.test.js"
   },
   "repository": {
     "type": "git",

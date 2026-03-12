@@ -1,14 +1,40 @@
 const express = require("express");
 const cacheRoutes = require("./routes/cacheRoutes");
+const zsetRoutes = require("./routes/zsetRoutes");
 
 const app = express();
 app.use(express.json());
 
+// Routes
 app.use("/cache", cacheRoutes);
+app.use("/zset", zsetRoutes);
+
+// Health check
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok", ts: Date.now() });
+});
+
+// Global error handler (Day 4) — 4-param signature required by Express
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error("[ERROR]", err.message ?? err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || "Internal server error",
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("");
-  console.log("🚀 Smart Cache Engine running!");
-  console.log(`📡 Server: http://localhost:${PORT}`);
+  console.log("  Smart Cache Engine");
+  console.log("  ==================");
+  console.log(`  Server  : http://localhost:${PORT}`);
+  console.log(`  Cache   : http://localhost:${PORT}/cache`);
+  console.log(`  Metrics : http://localhost:${PORT}/cache/metrics`);
+  console.log(`  ZSets   : http://localhost:${PORT}/zset`);
+  console.log(`  Health  : http://localhost:${PORT}/health`);
+  console.log("");
 });
+
+module.exports = app;
